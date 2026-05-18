@@ -49,27 +49,36 @@ export type Database = {
       habits: {
         Row: {
           created_at: string
+          dua: string | null
           emoji: string | null
           id: string
+          location: string | null
           name: string
+          reminder: string | null
           scheduled_time: string | null
           stack_on: string | null
           user_id: string
         }
         Insert: {
           created_at?: string
+          dua?: string | null
           emoji?: string | null
           id?: string
+          location?: string | null
           name: string
+          reminder?: string | null
           scheduled_time?: string | null
           stack_on?: string | null
           user_id: string
         }
         Update: {
           created_at?: string
+          dua?: string | null
           emoji?: string | null
           id?: string
+          location?: string | null
           name?: string
+          reminder?: string | null
           scheduled_time?: string | null
           stack_on?: string | null
           user_id?: string
