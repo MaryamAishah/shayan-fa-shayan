@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { addMonths, monthGrid, monthLabel, startOfMonth, toISODate } from "@/lib/date";
+import { monthGrid, monthLabel, startOfMonth, toISODate } from "@/lib/date";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
