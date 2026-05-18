@@ -4,14 +4,14 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Sparkles } from "lucide-react";
+import { Moon } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign in — Bloom Habits" },
-      { name: "description", content: "Sign in to track your daily habits." },
+      { title: "Sign in — Shay'an Fa Shay'an" },
+      { name: "description", content: "Sign in to track your habits, little by little." },
     ],
   }),
   component: LoginPage,
@@ -52,18 +52,19 @@ function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2 text-foreground">
-          <Sparkles className="h-6 w-6 text-primary" />
-          <span className="text-xl font-semibold tracking-tight">Bloom</span>
+          <Moon className="h-6 w-6 text-primary" />
+          <span className="text-xl font-semibold tracking-tight">Shay'an Fa Shay'an</span>
         </Link>
 
         <div className="rounded-3xl border bg-card/80 p-8 shadow-xl backdrop-blur-sm">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          <p className="text-sm font-medium text-primary">Assalamu alaikum</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
             {mode === "signin" ? "Welcome back" : "Create your account"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {mode === "signin"
-              ? "Sign in to keep your streak going."
-              : "Start blooming one habit at a time."}
+              ? "Sign in to keep going, little by little."
+              : "Begin your habit journey with bismillah."}
           </p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
