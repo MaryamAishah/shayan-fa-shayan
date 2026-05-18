@@ -52,6 +52,8 @@ export type Database = {
           emoji: string | null
           id: string
           name: string
+          scheduled_time: string | null
+          stack_on: string | null
           user_id: string
         }
         Insert: {
@@ -59,6 +61,8 @@ export type Database = {
           emoji?: string | null
           id?: string
           name: string
+          scheduled_time?: string | null
+          stack_on?: string | null
           user_id: string
         }
         Update: {
@@ -66,6 +70,8 @@ export type Database = {
           emoji?: string | null
           id?: string
           name?: string
+          scheduled_time?: string | null
+          stack_on?: string | null
           user_id?: string
         }
         Relationships: []
