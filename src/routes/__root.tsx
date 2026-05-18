@@ -73,14 +73,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "Bloom" },
+      { name: "description", content: "Visually track your progress with your habits- for all those who start off new habits but lack the motivation to continue." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "Bloom" },
+      { property: "og:description", content: "Visually track your progress with your habits- for all those who start off new habits but lack the motivation to continue." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Bloom" },
+      { name: "twitter:description", content: "Visually track your progress with your habits- for all those who start off new habits but lack the motivation to continue." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/3xKIxClGb2hKmd8PwDVpuQBoBi03/social-images/social-1779116079252-numu.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/3xKIxClGb2hKmd8PwDVpuQBoBi03/social-images/social-1779116079252-numu.webp" },
     ],
     links: [
       {
