@@ -48,6 +48,8 @@ export type Database = {
       }
       habits: {
         Row: {
+          ai_emoji: string | null
+          ai_motivation: string | null
           created_at: string
           dua: string | null
           emoji: string | null
@@ -60,6 +62,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          ai_emoji?: string | null
+          ai_motivation?: string | null
           created_at?: string
           dua?: string | null
           emoji?: string | null
@@ -72,6 +76,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          ai_emoji?: string | null
+          ai_motivation?: string | null
           created_at?: string
           dua?: string | null
           emoji?: string | null
