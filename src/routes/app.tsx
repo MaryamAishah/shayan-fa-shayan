@@ -1,22 +1,31 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
+import confetti from "canvas-confetti";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Heatmap } from "@/components/Heatmap";
-import { reminderOfTheDay } from "@/lib/quotes";
+import { ReminderCarousel } from "@/components/ReminderCarousel";
 import { addMonths, startOfMonth, toISODate } from "@/lib/date";
+import { suggestHabitMeta } from "@/lib/habit-ai.functions";
 import {
   Moon,
   Plus,
   Check,
   Trash2,
   LogOut,
-  BookOpen,
   Clock,
   Link2,
   MapPin,
@@ -28,6 +37,11 @@ import {
   Award,
   Star,
   Sparkles,
+  Crown,
+  Heart,
+  Sun,
+  Loader2,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -50,6 +64,8 @@ interface Habit {
   reminder: string | null;
   dua: string | null;
   location: string | null;
+  ai_emoji: string | null;
+  ai_motivation: string | null;
 }
 
 interface Completion {
@@ -93,7 +109,14 @@ function computeCurrentStreak(dates: string[], todayISO: string): number {
   return streak;
 }
 
-// Returns the ISO dates for the last 7 days, oldest first, ending today.
+function daysSinceLastCompletion(dates: string[], todayISO: string): number | null {
+  if (dates.length === 0) return null;
+  const last = [...new Set(dates)].sort().at(-1)!;
+  const lastD = new Date(last + "T00:00:00").getTime();
+  const today = new Date(todayISO + "T00:00:00").getTime();
+  return Math.round((today - lastD) / 86400000);
+}
+
 function lastSevenDays(todayISO: string): string[] {
   const out: string[] = [];
   const d = new Date(todayISO + "T00:00:00");
@@ -118,8 +141,11 @@ interface Badge {
   id: string;
   label: string;
   description: string;
+  detail: string;
   earned: boolean;
   icon: typeof Trophy;
+  /** tailwind color classes for earned state */
+  color: string;
 }
 
 function computeBadges(allDates: string[], todayISO: string): Badge[] {
@@ -130,46 +156,74 @@ function computeBadges(allDates: string[], todayISO: string): Badge[] {
     {
       id: "first-step",
       label: "First Step",
-      description: "Complete the habit once",
+      description: "Complete once",
+      detail: "Every journey to Allah starts with a single step. You showed up — alhamdulillah.",
       earned: total >= 1,
       icon: Sparkles,
+      color: "from-amber-300 to-yellow-500 text-amber-950",
     },
     {
       id: "week-strong",
-      label: "7-Day Streak",
+      label: "7-Day Flame",
       description: "7 days in a row",
+      detail: "Seven days of steady niyyah. The Prophet ﷺ loved deeds that were small and constant.",
       earned: longest >= 7,
       icon: Flame,
+      color: "from-orange-400 to-red-500 text-white",
     },
     {
       id: "habit-formed",
       label: "Habit Formed",
-      description: "21 consecutive days, ma sha Allah",
+      description: "21 days, ma sha Allah",
+      detail: "21 consecutive days — by Allah's permission, this is no longer effort, it's part of you.",
       earned: longest >= STREAK_GOAL,
       icon: Trophy,
+      color: "from-violet-400 to-fuchsia-600 text-white",
     },
     {
       id: "forty-days",
-      label: "Forty Days",
-      description: "40 consecutive days of sincerity",
+      label: "Forty Nights",
+      description: "40 in a row",
+      detail: "Forty days of sincerity — a number rich in our tradition. Allah sees every quiet effort.",
       earned: longest >= 40,
-      icon: Star,
+      icon: Crown,
+      color: "from-pink-400 to-rose-600 text-white",
     },
     {
       id: "monthly-15",
-      label: "Steady Month",
+      label: "Steady Half",
       description: "15 days this month",
+      detail: "Half the month is yours. Steady, not loud — that is the way of the believers.",
       earned: monthCount >= 15,
       icon: Award,
+      color: "from-sky-400 to-blue-600 text-white",
     },
     {
       id: "monthly-25",
       label: "Devoted Month",
       description: "25 days this month",
+      detail: "25 days of barakah. Keep your intentions soft and your steps small.",
       earned: monthCount >= 25,
-      icon: Award,
+      icon: Star,
+      color: "from-emerald-400 to-teal-600 text-white",
     },
   ];
+}
+
+function celebrateCompletion(big = false) {
+  if (typeof window === "undefined") return;
+  const defaults = {
+    spread: 70,
+    startVelocity: big ? 55 : 35,
+    scalar: big ? 1.1 : 0.8,
+    ticks: big ? 200 : 80,
+    colors: ["#10b981", "#a78bfa", "#f59e0b", "#ec4899", "#34d399"],
+  };
+  confetti({ ...defaults, particleCount: big ? 140 : 60, origin: { y: 0.7 } });
+  if (big) {
+    setTimeout(() => confetti({ ...defaults, particleCount: 80, angle: 60, origin: { x: 0, y: 0.7 } }), 150);
+    setTimeout(() => confetti({ ...defaults, particleCount: 80, angle: 120, origin: { x: 1, y: 0.7 } }), 300);
+  }
 }
 
 function AppPage() {
@@ -183,15 +237,16 @@ function AppPage() {
   const [newReminder, setNewReminder] = useState("");
   const [newDua, setNewDua] = useState("");
   const [newLocation, setNewLocation] = useState("");
+  const [justCompleted, setJustCompleted] = useState<string | null>(null);
+  const [selectedBadge, setSelectedBadge] = useState<{ badge: Badge; habit: Habit } | null>(null);
   const today = toISODate(new Date());
-  const reminder = useMemo(() => reminderOfTheDay(), []);
   const greetedRef = useRef(false);
+  const aiSuggest = useServerFn(suggestHabitMeta);
 
   useEffect(() => {
     if (!loading && !user) navigate({ to: "/login" });
   }, [loading, user, navigate]);
 
-  // Assalamu alaikum greeting on first session render
   useEffect(() => {
     if (user && !greetedRef.current) {
       greetedRef.current = true;
@@ -208,7 +263,7 @@ function AppPage() {
     queryFn: async (): Promise<Habit[]> => {
       const { data, error } = await supabase
         .from("habits")
-        .select("id,name,emoji,scheduled_time,stack_on,reminder,dua,location")
+        .select("id,name,emoji,scheduled_time,stack_on,reminder,dua,location,ai_emoji,ai_motivation")
         .order("created_at", { ascending: true });
       if (error) throw error;
       return data ?? [];
@@ -231,14 +286,33 @@ function AppPage() {
   const addHabit = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Not signed in");
+      // AI-tailored emoji + motivation (graceful fallback)
+      let aiEmoji: string | null = null;
+      let aiMotivation: string | null = null;
+      try {
+        const res = await aiSuggest({
+          data: {
+            name: newHabit.trim(),
+            reminder: newReminder.trim(),
+            location: newLocation.trim(),
+          },
+        });
+        aiEmoji = res?.emoji || null;
+        aiMotivation = res?.motivation || null;
+      } catch (e) {
+        console.warn("AI suggestion unavailable", e);
+      }
       const { error } = await supabase.from("habits").insert({
         name: newHabit.trim(),
         user_id: user.id,
+        emoji: aiEmoji ?? "🌱",
         scheduled_time: newTime || null,
         stack_on: newStack.trim() || null,
         reminder: newReminder.trim() || null,
         dua: newDua.trim() || null,
         location: newLocation.trim() || null,
+        ai_emoji: aiEmoji,
+        ai_motivation: aiMotivation,
       });
       if (error) throw error;
     },
@@ -283,6 +357,14 @@ function AppPage() {
         if (error) throw error;
       }
     },
+    onMutate: ({ habitId, done }) => {
+      if (!done) {
+        // newly completing
+        setJustCompleted(habitId);
+        celebrateCompletion(false);
+        setTimeout(() => setJustCompleted(null), 700);
+      }
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["completions-all"] }),
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
   });
@@ -310,8 +392,17 @@ function AppPage() {
   );
 
   const doneToday = todayDoneIds.size;
+  const allDoneRef = useRef(false);
+  useEffect(() => {
+    if (habits.length > 0 && doneToday === habits.length && !allDoneRef.current) {
+      allDoneRef.current = true;
+      celebrateCompletion(true);
+      toast.success("Ma sha Allah — every habit, complete today!", { duration: 6000 });
+    }
+    if (doneToday < habits.length) allDoneRef.current = false;
+  }, [doneToday, habits.length]);
 
-  // 21-day streak celebration (once per habit per milestone) — Ma sha Allah
+  // 21-day streak celebration with confetti
   useEffect(() => {
     if (!user) return;
     for (const h of habits) {
@@ -320,6 +411,7 @@ function AppPage() {
         const key = `shayan-21-${user.id}-${h.id}`;
         if (typeof window !== "undefined" && !localStorage.getItem(key)) {
           localStorage.setItem(key, "1");
+          celebrateCompletion(true);
           toast.success(`Ma sha Allah! 21 days of "${h.name}" — it's now a habit.`, {
             duration: 9000,
           });
@@ -360,23 +452,8 @@ function AppPage() {
       </header>
 
       <main className="mx-auto max-w-3xl space-y-6 px-6 pb-16">
-        {/* Daily reminder */}
-        <div className="rounded-3xl border bg-gradient-to-br from-accent/60 to-card/80 p-6 backdrop-blur-sm">
-          <div className="flex items-start gap-3">
-            <BookOpen className="mt-1 h-5 w-5 shrink-0 text-primary" />
-            <div>
-              {reminder.arabic && (
-                <p className="mb-2 text-right text-lg leading-loose text-foreground" dir="rtl">
-                  {reminder.arabic}
-                </p>
-              )}
-              <p className="text-base font-medium leading-relaxed text-foreground">
-                "{reminder.text}"
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">— {reminder.source}</p>
-            </div>
-          </div>
-        </div>
+        {/* Auto-rotating reminder carousel */}
+        <ReminderCarousel />
 
         <Tabs defaultValue="today" className="w-full">
           <TabsList className="grid w-full grid-cols-4">
@@ -404,28 +481,36 @@ function AppPage() {
                 <ul className="space-y-2">
                   {habits.map((h) => {
                     const done = todayDoneIds.has(h.id);
-                    const streak = computeCurrentStreak(datesByHabit[h.id] ?? [], today);
+                    const dates = datesByHabit[h.id] ?? [];
+                    const streak = computeCurrentStreak(dates, today);
+                    const longest = computeLongestStreak(dates);
+                    const gap = daysSinceLastCompletion(dates, today);
+                    const brokeStreak =
+                      !done && longest >= 3 && streak < longest && gap !== null && gap >= 2;
+                    const bouncing = justCompleted === h.id;
                     return (
                       <li
                         key={h.id}
-                        className="rounded-2xl border bg-background/50 p-3 transition hover:bg-background"
+                        className={`rounded-2xl border bg-background/50 p-3 transition-all duration-300 hover:bg-background hover:shadow-sm ${
+                          done ? "border-primary/30 bg-primary/5" : ""
+                        } ${bouncing ? "animate-in zoom-in-95" : ""}`}
                       >
                         <div className="flex items-center gap-3">
                           <button
                             type="button"
                             onClick={() => toggleToday.mutate({ habitId: h.id, done })}
-                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-200 active:scale-90 ${
                               done
-                                ? "border-primary bg-primary text-primary-foreground"
-                                : "border-border bg-background hover:border-primary"
-                            }`}
+                                ? "border-primary bg-primary text-primary-foreground shadow-md scale-105"
+                                : "border-border bg-background hover:border-primary hover:scale-110"
+                            } ${bouncing ? "animate-bounce" : ""}`}
                             aria-label={done ? "Mark not done" : "Mark done"}
                           >
                             {done && <Check className="h-4 w-4" />}
                           </button>
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium">
-                              <span className="mr-2">{h.emoji ?? "🌱"}</span>
+                              <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                               {h.name}
                             </div>
                             {(h.scheduled_time || h.stack_on || h.location) && (
@@ -453,9 +538,11 @@ function AppPage() {
                           </div>
                           {streak > 0 && (
                             <span
-                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition-transform hover:scale-110 ${
                                 streak >= STREAK_GOAL
-                                  ? "bg-primary/15 text-primary"
+                                  ? "bg-gradient-to-r from-violet-400 to-fuchsia-600 text-white shadow-sm"
+                                  : streak >= 7
+                                  ? "bg-gradient-to-r from-orange-400 to-red-500 text-white"
                                   : "bg-muted text-muted-foreground"
                               }`}
                               title={`${streak}-day streak`}
@@ -469,6 +556,26 @@ function AppPage() {
                             </span>
                           )}
                         </div>
+
+                        {/* AI-tailored motivation */}
+                        {h.ai_motivation && (
+                          <div className="mt-3 flex items-start gap-2 rounded-xl bg-gradient-to-br from-primary/5 to-accent/30 p-3 text-xs">
+                            <Sun className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
+                            <span className="italic text-foreground/85">{h.ai_motivation}</span>
+                          </div>
+                        )}
+
+                        {/* Streak-break pickup */}
+                        {brokeStreak && (
+                          <div className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200/60 bg-rose-50/70 p-3 text-xs dark:border-rose-900/50 dark:bg-rose-950/30">
+                            <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500 mt-0.5" />
+                            <span className="text-foreground/85">
+                              You once kept this for <span className="font-semibold">{longest} days</span>. A pause is not a failure — the Prophet ﷺ said,
+                              <span className="italic"> "The best of those who sin are those who repent."</span> Begin again today, in sha Allah.
+                            </span>
+                          </div>
+                        )}
+
                         {(h.dua || h.reminder) && (
                           <div className="mt-3 space-y-2 rounded-xl bg-muted/50 p-3 text-xs">
                             {h.dua && (
@@ -495,7 +602,6 @@ function AppPage() {
 
           {/* MY HABITS */}
           <TabsContent value="habits" className="mt-4 space-y-6">
-            {/* Info / guidance box */}
             <div className="rounded-3xl border border-primary/30 bg-primary/5 p-6">
               <div className="flex items-start gap-3">
                 <Info className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
@@ -514,7 +620,7 @@ function AppPage() {
                     </li>
                     <li className="flex gap-2">
                       <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span><span className="font-medium text-foreground">Stack on existing habit:</span> attach it to something you already do (e.g. "after Fajr") so the existing habit triggers the new one.</span>
+                      <span><span className="font-medium text-foreground">Stack on existing habit:</span> attach it to something you already do (e.g. "after Fajr").</span>
                     </li>
                     <li className="flex gap-2">
                       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -522,11 +628,15 @@ function AppPage() {
                     </li>
                     <li className="flex gap-2">
                       <HeartHandshake className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span><span className="font-medium text-foreground">Reminder / reward:</span> write what to tell yourself on weak days — the reward in this life or the next.</span>
+                      <span><span className="font-medium text-foreground">Reminder / reward:</span> write what to tell yourself on weak days.</span>
                     </li>
                     <li className="flex gap-2">
                       <Hand className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                       <span><span className="font-medium text-foreground">Daily du'a:</span> turn to Allah for help. "And whoever relies on Allah, He is sufficient for him." (65:3)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <span><span className="font-medium text-foreground">AI-tailored:</span> when you add a habit, an emoji and a personal motivation line are generated just for it.</span>
                     </li>
                   </ul>
                 </div>
@@ -611,7 +721,11 @@ function AppPage() {
                   disabled={!newHabit.trim() || addHabit.isPending}
                   className="w-full sm:w-auto"
                 >
-                  <Plus className="mr-2 h-4 w-4" /> Add habit
+                  {addHabit.isPending ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Asking AI for an emoji…</>
+                  ) : (
+                    <><Plus className="mr-2 h-4 w-4" /> Add habit</>
+                  )}
                 </Button>
               </form>
             </div>
@@ -628,11 +742,14 @@ function AppPage() {
                     const longest = computeLongestStreak(datesByHabit[h.id] ?? []);
                     const pct = Math.min(100, Math.round((longest / STREAK_GOAL) * 100));
                     return (
-                      <li key={h.id} className="rounded-2xl border bg-background/50 p-3">
+                      <li
+                        key={h.id}
+                        className="rounded-2xl border bg-background/50 p-3 transition-all hover:bg-background hover:shadow-sm"
+                      >
                         <div className="flex items-center gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium">
-                              <span className="mr-2">{h.emoji ?? "🌱"}</span>
+                              <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                               {h.name}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -665,6 +782,12 @@ function AppPage() {
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
+                        {h.ai_motivation && (
+                          <div className="mt-3 flex items-start gap-2 rounded-xl bg-gradient-to-br from-primary/5 to-accent/30 p-2.5 text-xs italic text-foreground/80">
+                            <Sun className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
+                            <span>{h.ai_motivation}</span>
+                          </div>
+                        )}
                         {(h.dua || h.reminder) && (
                           <div className="mt-3 space-y-1.5 rounded-xl bg-muted/40 p-3 text-xs">
                             {h.dua && (
@@ -697,7 +820,7 @@ function AppPage() {
                           </div>
                           <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
                             <div
-                              className="h-full rounded-full bg-primary transition-all"
+                              className="h-full rounded-full bg-gradient-to-r from-primary to-emerald-400 transition-all duration-700"
                               style={{ width: `${pct}%` }}
                             />
                           </div>
@@ -737,24 +860,24 @@ function AppPage() {
                   {habits.map((h) => {
                     const set = new Set(datesByHabit[h.id] ?? []);
                     const hits = weekDays.filter((d) => set.has(d)).length;
-                    const praise =
-                      hits === 7
-                        ? "Ma sha Allah — every day!"
-                        : hits >= 5
-                        ? "Ma sha Allah, strong week."
-                        : hits >= 3
-                        ? "Alhamdulillah, keep going."
-                        : hits >= 1
-                        ? "A start is a blessing. Tomorrow is a new chance."
-                        : "No worries — begin again, in sha Allah.";
                     return (
-                      <li key={h.id} className="rounded-2xl border bg-background/50 p-3">
+                      <li key={h.id} className="rounded-2xl border bg-background/50 p-3 transition hover:shadow-sm">
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-sm font-medium">
-                            <span className="mr-2">{h.emoji ?? "🌱"}</span>
+                            <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                             {h.name}
                           </div>
-                          <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                          <span
+                            className={`rounded-full px-2 py-1 text-xs font-medium ${
+                              hits === 7
+                                ? "bg-gradient-to-r from-violet-400 to-fuchsia-600 text-white"
+                                : hits >= 5
+                                ? "bg-gradient-to-r from-emerald-400 to-teal-600 text-white"
+                                : hits >= 3
+                                ? "bg-primary/10 text-primary"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
                             {hits}/7
                           </span>
                         </div>
@@ -767,8 +890,10 @@ function AppPage() {
                             return (
                               <div key={d} className="flex flex-1 flex-col items-center gap-1">
                                 <div
-                                  className={`h-7 w-full rounded-md ${
-                                    done ? "bg-primary" : "bg-muted"
+                                  className={`h-7 w-full rounded-md transition-all ${
+                                    done
+                                      ? "bg-gradient-to-b from-primary to-emerald-600 shadow-sm"
+                                      : "bg-muted"
                                   }`}
                                   title={d}
                                 />
@@ -781,8 +906,27 @@ function AppPage() {
                         </div>
                         <p className="mt-2 text-xs text-muted-foreground">
                           You completed <span className="font-medium text-foreground">{h.name}</span>{" "}
-                          for {hits}/7 days this week. {praise}
+                          for <span className="font-medium text-foreground">{hits}/7</span> days this week.
+                          {hits === 7 && " Ma sha Allah — every single day!"}
+                          {hits >= 5 && hits < 7 && " Strong week, alhamdulillah."}
+                          {hits >= 1 && hits < 5 && " Every checkmark is a seed."}
+                          {hits === 0 && " A new week is a new mercy — begin again, in sha Allah."}
                         </p>
+                        {/* Personal reminder the user wrote */}
+                        {h.reminder && (
+                          <div className="mt-2 flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/5 p-2.5 text-xs">
+                            <HeartHandshake className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
+                            <span className="text-foreground/85">
+                              <span className="font-medium">Your reminder:</span> {h.reminder}
+                            </span>
+                          </div>
+                        )}
+                        {h.ai_motivation && !h.reminder && (
+                          <div className="mt-2 flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/5 p-2.5 text-xs italic">
+                            <Sun className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
+                            <span className="text-foreground/85">{h.ai_motivation}</span>
+                          </div>
+                        )}
                       </li>
                     );
                   })}
@@ -794,7 +938,7 @@ function AppPage() {
             <div className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
               <h2 className="text-lg font-semibold tracking-tight">Badges</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Milestones earned across all your habits. Every step counts, ma sha Allah.
+                Tap a badge for the story behind it. Every step counts, ma sha Allah.
               </p>
               {habits.length === 0 ? (
                 <p className="mt-6 rounded-2xl border border-dashed py-10 text-center text-sm text-muted-foreground">
@@ -807,27 +951,32 @@ function AppPage() {
                     return (
                       <div key={h.id} className="rounded-2xl border bg-background/50 p-3">
                         <div className="mb-3 text-sm font-medium">
-                          <span className="mr-2">{h.emoji ?? "🌱"}</span>
+                          <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                           {h.name}
                         </div>
                         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                           {badges.map((b) => {
                             const Icon = b.icon;
                             return (
-                              <div
+                              <button
+                                type="button"
                                 key={b.id}
-                                title={b.description}
-                                className={`flex flex-col items-center gap-1 rounded-xl border p-2 text-center transition ${
+                                onClick={() => setSelectedBadge({ badge: b, habit: h })}
+                                className={`group flex flex-col items-center gap-1 rounded-xl border p-2 text-center transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
                                   b.earned
-                                    ? "border-primary/40 bg-primary/10 text-primary"
-                                    : "border-dashed bg-muted/30 text-muted-foreground opacity-60"
+                                    ? `bg-gradient-to-br ${b.color} border-transparent shadow-sm`
+                                    : "border-dashed bg-muted/30 text-muted-foreground opacity-60 hover:opacity-90"
                                 }`}
                               >
-                                <Icon className="h-5 w-5" />
+                                <Icon
+                                  className={`h-5 w-5 transition-transform group-hover:scale-110 ${
+                                    b.earned ? "drop-shadow-sm" : ""
+                                  }`}
+                                />
                                 <span className="text-[10px] font-medium leading-tight">
                                   {b.label}
                                 </span>
-                              </div>
+                              </button>
                             );
                           })}
                         </div>
@@ -840,6 +989,46 @@ function AppPage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Badge details dialog */}
+      <Dialog open={!!selectedBadge} onOpenChange={(o) => !o && setSelectedBadge(null)}>
+        <DialogContent className="sm:max-w-md">
+          {selectedBadge && (
+            <>
+              <DialogHeader>
+                <div
+                  className={`mx-auto mb-3 flex h-20 w-20 items-center justify-center rounded-2xl bg-gradient-to-br ${selectedBadge.badge.color} shadow-lg ${
+                    selectedBadge.badge.earned ? "" : "opacity-50 grayscale"
+                  }`}
+                >
+                  <selectedBadge.badge.icon className="h-10 w-10 drop-shadow" />
+                </div>
+                <DialogTitle className="text-center text-xl">{selectedBadge.badge.label}</DialogTitle>
+                <DialogDescription className="text-center">
+                  for <span className="font-medium text-foreground">{selectedBadge.habit.emoji} {selectedBadge.habit.name}</span>
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p className="text-foreground/85">{selectedBadge.badge.detail}</p>
+                <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">Requirement</span>
+                  <span className="font-medium">{selectedBadge.badge.description}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">Status</span>
+                  <span
+                    className={`font-medium ${
+                      selectedBadge.badge.earned ? "text-primary" : "text-muted-foreground"
+                    }`}
+                  >
+                    {selectedBadge.badge.earned ? "Earned, ma sha Allah" : "Not yet — keep going"}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
