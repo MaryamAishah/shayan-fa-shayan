@@ -1,7 +1,27 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { monthGrid, monthLabel, startOfMonth, toISODate } from "@/lib/date";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+function hijriLabel(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat("en-TN-u-ca-islamic-umalqura", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(d).replace(" AH", "") + " AH";
+  } catch {
+    return "";
+  }
+}
+
+function hijriDay(d: Date): string {
+  try {
+    return new Intl.DateTimeFormat("en-TN-u-ca-islamic-umalqura", { day: "numeric" }).format(d);
+  } catch {
+    return String(d.getDate());
+  }
+}
 
 interface Props {
   /** map of YYYY-MM-DD => count of habits completed that day */
