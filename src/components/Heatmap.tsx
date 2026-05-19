@@ -60,12 +60,38 @@ export function Heatmap({ counts, totalHabits, monthDate, onPrev, onNext }: Prop
   const month = startOfMonth(monthDate);
   const cells = useMemo(() => monthGrid(month), [month]);
   const todayISO = toISODate(new Date());
+  const [showHijri, setShowHijri] = useState(false);
 
   return (
     <div className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">{monthLabel(month)}</h2>
-        <div className="flex items-center gap-1">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold tracking-tight">{monthLabel(month)}</h2>
+          <p className="truncate text-xs text-muted-foreground">{hijriLabel(month)}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-full border bg-background p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setShowHijri(false)}
+              className={`rounded-full px-2.5 py-1 transition ${
+                !showHijri ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              aria-pressed={!showHijri}
+            >
+              Greg
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowHijri(true)}
+              className={`rounded-full px-2.5 py-1 transition ${
+                showHijri ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              aria-pressed={showHijri}
+            >
+              Hijri
+            </button>
+          </div>
           <Button size="icon" variant="ghost" onClick={onPrev} aria-label="Previous month">
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -90,15 +116,16 @@ export function Heatmap({ counts, totalHabits, monthDate, onPrev, onNext }: Prop
           const size = SIZES[b];
           const color = HEAT_VARS[b];
           const isToday = iso === todayISO;
+          const label = showHijri ? hijriDay(dt) : String(dt.getDate());
           return (
             <div
               key={i}
               className="relative flex aspect-square items-center justify-center"
-              title={`${iso}: ${count} habit${count === 1 ? "" : "s"}`}
+              title={`${iso} · ${hijriLabel(dt)} — ${count} habit${count === 1 ? "" : "s"}`}
             >
               {size > 0 && (
                 <span
-                  className="absolute rounded-full transition-all"
+                  className="absolute rounded-full transition-all duration-300 hover:scale-110"
                   style={{
                     width: size,
                     height: size,
@@ -112,12 +139,13 @@ export function Heatmap({ counts, totalHabits, monthDate, onPrev, onNext }: Prop
                   inMonth ? (b >= 3 ? "text-primary-foreground" : "text-foreground") : "text-muted-foreground/40"
                 } ${isToday ? "underline underline-offset-4" : ""}`}
               >
-                {dt.getDate()}
+                {label}
               </span>
             </div>
           );
         })}
       </div>
+
 
       <div className="mt-4 flex items-center justify-end gap-2 text-xs text-muted-foreground">
         <span>Less</span>
