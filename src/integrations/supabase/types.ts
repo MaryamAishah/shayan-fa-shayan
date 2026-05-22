@@ -53,10 +53,13 @@ export type Database = {
           created_at: string
           dua: string | null
           emoji: string | null
+          habit_type: string
           id: string
           location: string | null
+          minimum_target: string | null
           name: string
           reminder: string | null
+          replacement: string | null
           scheduled_time: string | null
           stack_on: string | null
           user_id: string
@@ -67,10 +70,13 @@ export type Database = {
           created_at?: string
           dua?: string | null
           emoji?: string | null
+          habit_type?: string
           id?: string
           location?: string | null
+          minimum_target?: string | null
           name: string
           reminder?: string | null
+          replacement?: string | null
           scheduled_time?: string | null
           stack_on?: string | null
           user_id: string
@@ -81,10 +87,13 @@ export type Database = {
           created_at?: string
           dua?: string | null
           emoji?: string | null
+          habit_type?: string
           id?: string
           location?: string | null
+          minimum_target?: string | null
           name?: string
           reminder?: string | null
+          replacement?: string | null
           scheduled_time?: string | null
           stack_on?: string | null
           user_id?: string

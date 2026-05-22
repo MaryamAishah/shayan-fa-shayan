@@ -46,7 +46,7 @@ export function ReminderCarousel() {
           <p className="text-base font-medium leading-relaxed text-foreground">
             "{r.text}"
           </p>
-          <p className="mt-2 text-sm text-muted-foreground">— {r.source}</p>
+          <p className="mt-2 text-sm text-muted-foreground">{r.source}</p>
         </div>
       </div>
 

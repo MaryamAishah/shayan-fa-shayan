@@ -15,10 +15,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Heatmap } from "@/components/Heatmap";
 import { ReminderCarousel } from "@/components/ReminderCarousel";
-import { addMonths, startOfMonth, toISODate } from "@/lib/date";
+import { NextHabitMotivation } from "@/components/NextHabitMotivation";
+import { toISODate } from "@/lib/date";
 import { suggestHabitMeta } from "@/lib/habit-ai.functions";
 import {
   Moon,
@@ -42,13 +44,18 @@ import {
   Sun,
   Loader2,
   Wand2,
+  Pencil,
+  Ban,
+  Target,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/app")({
   head: () => ({
     meta: [
-      { title: "Shay'an Fa Shay'an — Little by Little" },
+      { title: "Shay'an Fa Shay'an : Little by Little" },
       { name: "description", content: "An Islamic habit tracker to grow little by little, with sincerity and consistency." },
     ],
   }),
@@ -66,6 +73,9 @@ interface Habit {
   location: string | null;
   ai_emoji: string | null;
   ai_motivation: string | null;
+  habit_type: string | null;
+  replacement: string | null;
+  minimum_target: string | null;
 }
 
 interface Completion {
@@ -144,7 +154,6 @@ interface Badge {
   detail: string;
   earned: boolean;
   icon: typeof Trophy;
-  /** tailwind color classes for earned state */
   color: string;
 }
 
@@ -157,7 +166,7 @@ function computeBadges(allDates: string[], todayISO: string): Badge[] {
       id: "first-step",
       label: "First Step",
       description: "Complete once",
-      detail: "Every journey to Allah starts with a single step. You showed up — alhamdulillah.",
+      detail: "Every journey to Allah starts with a single step. You showed up, alhamdulillah.",
       earned: total >= 1,
       icon: Sparkles,
       color: "from-amber-300 to-yellow-500 text-amber-950",
@@ -175,7 +184,7 @@ function computeBadges(allDates: string[], todayISO: string): Badge[] {
       id: "habit-formed",
       label: "Habit Formed",
       description: "21 days, ma sha Allah",
-      detail: "21 consecutive days — by Allah's permission, this is no longer effort, it's part of you.",
+      detail: "21 consecutive days. By Allah's permission, this is no longer effort, it's part of you.",
       earned: longest >= STREAK_GOAL,
       icon: Trophy,
       color: "from-violet-400 to-fuchsia-600 text-white",
@@ -184,7 +193,7 @@ function computeBadges(allDates: string[], todayISO: string): Badge[] {
       id: "forty-days",
       label: "Forty Nights",
       description: "40 in a row",
-      detail: "Forty days of sincerity — a number rich in our tradition. Allah sees every quiet effort.",
+      detail: "Forty days of sincerity, a number rich in our tradition. Allah sees every quiet effort.",
       earned: longest >= 40,
       icon: Crown,
       color: "from-pink-400 to-rose-600 text-white",
@@ -193,7 +202,7 @@ function computeBadges(allDates: string[], todayISO: string): Badge[] {
       id: "monthly-15",
       label: "Steady Half",
       description: "15 days this month",
-      detail: "Half the month is yours. Steady, not loud — that is the way of the believers.",
+      detail: "Half the month is yours. Steady, not loud, that is the way of the believers.",
       earned: monthCount >= 15,
       icon: Award,
       color: "from-sky-400 to-blue-600 text-white",
@@ -226,21 +235,45 @@ function celebrateCompletion(big = false) {
   }
 }
 
+interface HabitFormState {
+  name: string;
+  time: string;
+  stack: string;
+  intention: string;
+  dua: string;
+  location: string;
+  habit_type: "good" | "bad";
+  replacement: string;
+  minimum_target: string;
+}
+
+const EMPTY_FORM: HabitFormState = {
+  name: "",
+  time: "",
+  stack: "",
+  intention: "",
+  dua: "",
+  location: "",
+  habit_type: "good",
+  replacement: "",
+  minimum_target: "",
+};
+
 function AppPage() {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const qc = useQueryClient();
-  const [monthDate, setMonthDate] = useState(() => startOfMonth(new Date()));
-  const [newHabit, setNewHabit] = useState("");
-  const [newTime, setNewTime] = useState("");
-  const [newStack, setNewStack] = useState("");
-  const [newReminder, setNewReminder] = useState("");
-  const [newDua, setNewDua] = useState("");
-  const [newLocation, setNewLocation] = useState("");
+  const [form, setForm] = useState<HabitFormState>(EMPTY_FORM);
+  const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
+  const [editForm, setEditForm] = useState<HabitFormState>(EMPTY_FORM);
   const [justCompleted, setJustCompleted] = useState<string | null>(null);
   const [selectedBadge, setSelectedBadge] = useState<{ badge: Badge; habit: Habit } | null>(null);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | "unsupported">(
+    () => (typeof Notification === "undefined" ? "unsupported" : Notification.permission),
+  );
   const today = toISODate(new Date());
   const greetedRef = useRef(false);
+  const firedNotifRef = useRef<Set<string>>(new Set());
   const aiSuggest = useServerFn(suggestHabitMeta);
 
   useEffect(() => {
@@ -263,10 +296,10 @@ function AppPage() {
     queryFn: async (): Promise<Habit[]> => {
       const { data, error } = await supabase
         .from("habits")
-        .select("id,name,emoji,scheduled_time,stack_on,reminder,dua,location,ai_emoji,ai_motivation")
+        .select("id,name,emoji,scheduled_time,stack_on,reminder,dua,location,ai_emoji,ai_motivation,habit_type,replacement,minimum_target")
         .order("created_at", { ascending: true });
       if (error) throw error;
-      return data ?? [];
+      return (data ?? []) as Habit[];
     },
   });
 
@@ -283,50 +316,66 @@ function AppPage() {
     },
   });
 
+  const buildPayload = async (f: HabitFormState) => {
+    let aiEmoji: string | null = null;
+    let aiMotivation: string | null = null;
+    try {
+      const res = await aiSuggest({
+        data: {
+          name: f.name.trim(),
+          reminder: f.intention.trim(),
+          location: f.location.trim(),
+        },
+      });
+      aiEmoji = res?.emoji || null;
+      aiMotivation = res?.motivation || null;
+    } catch (e) {
+      console.warn("AI suggestion unavailable", e);
+    }
+    return {
+      name: f.name.trim(),
+      emoji: aiEmoji ?? "🌱",
+      scheduled_time: f.time || null,
+      stack_on: f.stack.trim() || null,
+      reminder: f.intention.trim() || null,
+      dua: f.dua.trim() || null,
+      location: f.location.trim() || null,
+      ai_emoji: aiEmoji,
+      ai_motivation: aiMotivation,
+      habit_type: f.habit_type,
+      replacement: f.habit_type === "bad" ? (f.replacement.trim() || null) : null,
+      minimum_target: f.minimum_target.trim() || null,
+    };
+  };
+
   const addHabit = useMutation({
     mutationFn: async () => {
       if (!user) throw new Error("Not signed in");
-      // AI-tailored emoji + motivation (graceful fallback)
-      let aiEmoji: string | null = null;
-      let aiMotivation: string | null = null;
-      try {
-        const res = await aiSuggest({
-          data: {
-            name: newHabit.trim(),
-            reminder: newReminder.trim(),
-            location: newLocation.trim(),
-          },
-        });
-        aiEmoji = res?.emoji || null;
-        aiMotivation = res?.motivation || null;
-      } catch (e) {
-        console.warn("AI suggestion unavailable", e);
-      }
-      const { error } = await supabase.from("habits").insert({
-        name: newHabit.trim(),
-        user_id: user.id,
-        emoji: aiEmoji ?? "🌱",
-        scheduled_time: newTime || null,
-        stack_on: newStack.trim() || null,
-        reminder: newReminder.trim() || null,
-        dua: newDua.trim() || null,
-        location: newLocation.trim() || null,
-        ai_emoji: aiEmoji,
-        ai_motivation: aiMotivation,
-      });
+      const payload = await buildPayload(form);
+      const { error } = await supabase.from("habits").insert({ ...payload, user_id: user.id });
       if (error) throw error;
     },
     onSuccess: () => {
-      setNewHabit("");
-      setNewTime("");
-      setNewStack("");
-      setNewReminder("");
-      setNewDua("");
-      setNewLocation("");
-      toast.success("Habit added. Bismillah — little by little.");
+      setForm(EMPTY_FORM);
+      toast.success("Habit added. Bismillah, little by little.");
       qc.invalidateQueries({ queryKey: ["habits"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to add"),
+  });
+
+  const updateHabit = useMutation({
+    mutationFn: async () => {
+      if (!editingHabit) throw new Error("Nothing to edit");
+      const payload = await buildPayload(editForm);
+      const { error } = await supabase.from("habits").update(payload).eq("id", editingHabit.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setEditingHabit(null);
+      toast.success("Habit updated.");
+      qc.invalidateQueries({ queryKey: ["habits"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed to update"),
   });
 
   const deleteHabit = useMutation({
@@ -359,7 +408,6 @@ function AppPage() {
     },
     onMutate: ({ habitId, done }) => {
       if (!done) {
-        // newly completing
         setJustCompleted(habitId);
         celebrateCompletion(false);
         setTimeout(() => setJustCompleted(null), 700);
@@ -391,18 +439,23 @@ function AppPage() {
     [completions, today],
   );
 
+  const longestAnyStreak = useMemo(
+    () => habits.reduce((max, h) => Math.max(max, computeLongestStreak(datesByHabit[h.id] ?? [])), 0),
+    [habits, datesByHabit],
+  );
+
   const doneToday = todayDoneIds.size;
   const allDoneRef = useRef(false);
   useEffect(() => {
     if (habits.length > 0 && doneToday === habits.length && !allDoneRef.current) {
       allDoneRef.current = true;
       celebrateCompletion(true);
-      toast.success("Ma sha Allah — every habit, complete today!", { duration: 6000 });
+      toast.success("Ma sha Allah, every habit complete today!", { duration: 6000 });
     }
     if (doneToday < habits.length) allDoneRef.current = false;
   }, [doneToday, habits.length]);
 
-  // 21-day streak celebration with confetti
+  // 21-day streak celebration
   useEffect(() => {
     if (!user) return;
     for (const h of habits) {
@@ -412,7 +465,7 @@ function AppPage() {
         if (typeof window !== "undefined" && !localStorage.getItem(key)) {
           localStorage.setItem(key, "1");
           celebrateCompletion(true);
-          toast.success(`Ma sha Allah! 21 days of "${h.name}" — it's now a habit.`, {
+          toast.success(`Ma sha Allah! 21 days of "${h.name}", it's now a habit.`, {
             duration: 9000,
           });
         }
@@ -420,11 +473,68 @@ function AppPage() {
     }
   }, [habits, datesByHabit, user]);
 
+  // Time-based notifications (browser). Checks every 30s for matching scheduled_time.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof Notification === "undefined") return;
+    if (notifPermission !== "granted") return;
+    const check = () => {
+      const now = new Date();
+      const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const todayKey = toISODate(now);
+      for (const h of habits) {
+        if (!h.scheduled_time) continue;
+        const sched = h.scheduled_time.slice(0, 5);
+        if (sched !== hhmm) continue;
+        if (todayDoneIds.has(h.id)) continue;
+        const fireKey = `${todayKey}-${h.id}-${sched}`;
+        if (firedNotifRef.current.has(fireKey)) continue;
+        firedNotifRef.current.add(fireKey);
+        try {
+          new Notification(`${h.emoji ?? "🌱"} ${h.name}`, {
+            body: h.habit_type === "bad"
+              ? `Time to pause and avoid this. ${h.replacement ? `Try instead: ${h.replacement}` : ""}`
+              : `It's ${sched}. ${h.reminder ?? "Bismillah, time for your habit."}`,
+            tag: fireKey,
+          });
+        } catch (e) {
+          console.warn("Notification failed", e);
+        }
+      }
+    };
+    check();
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, [habits, todayDoneIds, notifPermission]);
+
+  const requestNotifications = async () => {
+    if (typeof Notification === "undefined") return;
+    const p = await Notification.requestPermission();
+    setNotifPermission(p);
+    if (p === "granted") {
+      toast.success("Reminders enabled. We'll nudge you at each habit's time.");
+    }
+  };
+
   const weekDays = useMemo(() => lastSevenDays(today), [today]);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     navigate({ to: "/" });
+  };
+
+  const openEdit = (h: Habit) => {
+    setEditingHabit(h);
+    setEditForm({
+      name: h.name,
+      time: h.scheduled_time?.slice(0, 5) ?? "",
+      stack: h.stack_on ?? "",
+      intention: h.reminder ?? "",
+      dua: h.dua ?? "",
+      location: h.location ?? "",
+      habit_type: (h.habit_type === "bad" ? "bad" : "good"),
+      replacement: h.replacement ?? "",
+      minimum_target: h.minimum_target ?? "",
+    });
   };
 
   if (loading || !user) {
@@ -445,15 +555,34 @@ function AppPage() {
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Little by little</div>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleSignOut}>
-          <LogOut className="mr-2 h-4 w-4" />
-          Sign out
-        </Button>
+        <div className="flex items-center gap-1">
+          {notifPermission !== "granted" && notifPermission !== "unsupported" && (
+            <Button variant="ghost" size="sm" onClick={requestNotifications}>
+              <Bell className="mr-2 h-4 w-4" />
+              Enable reminders
+            </Button>
+          )}
+          {notifPermission === "granted" && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary">
+              <Bell className="h-3 w-3" /> Reminders on
+            </span>
+          )}
+          <Button variant="ghost" size="sm" onClick={handleSignOut}>
+            <LogOut className="mr-2 h-4 w-4" />
+            Sign out
+          </Button>
+        </div>
       </header>
 
       <main className="mx-auto max-w-3xl space-y-6 px-6 pb-16">
-        {/* Auto-rotating reminder carousel */}
         <ReminderCarousel />
+
+        <NextHabitMotivation
+          habits={habits}
+          doneTodayIds={todayDoneIds}
+          totalCompletionsAllTime={completions.length}
+          longestAnyStreak={longestAnyStreak}
+        />
 
         <Tabs defaultValue="today" className="w-full">
           <TabsList className="grid w-full grid-cols-4">
@@ -488,12 +617,13 @@ function AppPage() {
                     const brokeStreak =
                       !done && longest >= 3 && streak < longest && gap !== null && gap >= 2;
                     const bouncing = justCompleted === h.id;
+                    const isBad = h.habit_type === "bad";
                     return (
                       <li
                         key={h.id}
                         className={`rounded-2xl border bg-background/50 p-3 transition-all duration-300 hover:bg-background hover:shadow-sm ${
                           done ? "border-primary/30 bg-primary/5" : ""
-                        } ${bouncing ? "animate-in zoom-in-95" : ""}`}
+                        } ${bouncing ? "animate-in zoom-in-95" : ""} ${isBad ? "border-rose-300/40" : ""}`}
                       >
                         <div className="flex items-center gap-3">
                           <button
@@ -512,8 +642,13 @@ function AppPage() {
                             <div className="text-sm font-medium">
                               <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                               {h.name}
+                              {isBad && (
+                                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                                  <Ban className="h-2.5 w-2.5" /> avoiding
+                                </span>
+                              )}
                             </div>
-                            {(h.scheduled_time || h.stack_on || h.location) && (
+                            {(h.scheduled_time || h.stack_on || h.location || h.minimum_target) && (
                               <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                 {h.scheduled_time && (
                                   <span className="inline-flex items-center gap-1">
@@ -524,7 +659,13 @@ function AppPage() {
                                 {h.stack_on && (
                                   <span className="inline-flex items-center gap-1">
                                     <Link2 className="h-3 w-3" />
-                                    after {h.stack_on}
+                                    {h.stack_on}
+                                  </span>
+                                )}
+                                {h.minimum_target && (
+                                  <span className="inline-flex items-center gap-1">
+                                    <Target className="h-3 w-3" />
+                                    at least {h.minimum_target}
                                   </span>
                                 )}
                                 {h.location && (
@@ -557,7 +698,15 @@ function AppPage() {
                           )}
                         </div>
 
-                        {/* AI-tailored motivation */}
+                        {isBad && h.replacement && (
+                          <div className="mt-3 flex items-start gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/70 p-3 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                            <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-600 mt-0.5" />
+                            <span className="text-foreground/85">
+                              <span className="font-medium">Replace with:</span> {h.replacement}
+                            </span>
+                          </div>
+                        )}
+
                         {h.ai_motivation && (
                           <div className="mt-3 flex items-start gap-2 rounded-xl bg-gradient-to-br from-primary/5 to-accent/30 p-3 text-xs">
                             <Sun className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
@@ -565,12 +714,11 @@ function AppPage() {
                           </div>
                         )}
 
-                        {/* Streak-break pickup */}
                         {brokeStreak && (
                           <div className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200/60 bg-rose-50/70 p-3 text-xs dark:border-rose-900/50 dark:bg-rose-950/30">
                             <Heart className="h-3.5 w-3.5 shrink-0 text-rose-500 mt-0.5" />
                             <span className="text-foreground/85">
-                              You once kept this for <span className="font-semibold">{longest} days</span>. A pause is not a failure — the Prophet ﷺ said,
+                              You once kept this for <span className="font-semibold">{longest} days</span>. A pause is not a failure. The Prophet ﷺ said,
                               <span className="italic"> "The best of those who sin are those who repent."</span> Begin again today, in sha Allah.
                             </span>
                           </div>
@@ -587,7 +735,7 @@ function AppPage() {
                             {h.reminder && (
                               <div className="flex gap-2 text-foreground/80">
                                 <HeartHandshake className="h-3.5 w-3.5 shrink-0 text-primary" />
-                                <span><span className="font-medium">Remember:</span> {h.reminder}</span>
+                                <span><span className="font-medium">Intention:</span> {h.reminder}</span>
                               </div>
                             )}
                           </div>
@@ -610,17 +758,21 @@ function AppPage() {
                   <p className="text-muted-foreground">
                     Build it slowly with sincerity. The Prophet ﷺ said the most beloved deeds to Allah are
                     those that are most consistent, even if they are small. Aim to stick with any new habit
-                    for <span className="font-semibold text-foreground">21 consecutive days</span> — that is
+                    for <span className="font-semibold text-foreground">21 consecutive days</span>. That is
                     when, by Allah's permission, it starts to feel natural.
                   </p>
                   <ul className="space-y-2 text-muted-foreground">
                     <li className="flex gap-2">
                       <Clock className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span><span className="font-medium text-foreground">Time of day:</span> a specific time anchors the habit so it doesn't drift.</span>
+                      <span><span className="font-medium text-foreground">Time of day:</span> a specific time anchors the habit so it doesn't drift. We'll send a browser reminder at that time.</span>
                     </li>
                     <li className="flex gap-2">
                       <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span><span className="font-medium text-foreground">Stack on existing habit:</span> attach it to something you already do (e.g. "after Fajr").</span>
+                      <span><span className="font-medium text-foreground">Stack on existing habit:</span> attach it to something you already do (e.g. "after Fajr"). Type it however you want, it shows exactly as you write it.</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <Target className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <span><span className="font-medium text-foreground">At least:</span> the minimum amount you commit to on hard days. Even 1 page, 1 rak'ah, 1 minute.</span>
                     </li>
                     <li className="flex gap-2">
                       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -628,11 +780,15 @@ function AppPage() {
                     </li>
                     <li className="flex gap-2">
                       <HeartHandshake className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                      <span><span className="font-medium text-foreground">Reminder / reward:</span> write what to tell yourself on weak days.</span>
+                      <span><span className="font-medium text-foreground">Intention / reminder:</span> write your niyyah and what to tell yourself on weak days.</span>
                     </li>
                     <li className="flex gap-2">
                       <Hand className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                       <span><span className="font-medium text-foreground">Daily du'a:</span> turn to Allah for help. "And whoever relies on Allah, He is sufficient for him." (65:3)</span>
+                    </li>
+                    <li className="flex gap-2">
+                      <Ban className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <span><span className="font-medium text-foreground">Bad habit to break:</span> mark it as a habit to avoid and pair it with a better replacement to step into.</span>
                     </li>
                     <li className="flex gap-2">
                       <Wand2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -646,79 +802,19 @@ function AppPage() {
             <div className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
               <h2 className="text-lg font-semibold tracking-tight">Add a habit</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Bismillah. Keep it small and steady — 21 days, in sha Allah.
+                Bismillah. Keep it small and steady. 21 days, in sha Allah.
               </p>
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (newHabit.trim()) addHabit.mutate();
+                  if (form.name.trim()) addHabit.mutate();
                 }}
                 className="mt-4 space-y-3"
               >
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Habit</label>
-                  <Input
-                    value={newHabit}
-                    onChange={(e) => setNewHabit(e.target.value)}
-                    placeholder="e.g. Read one page of Qur'an"
-                    maxLength={120}
-                  />
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground">Time of day</label>
-                    <Input
-                      type="time"
-                      value={newTime}
-                      onChange={(e) => setNewTime(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-muted-foreground">Stack on existing habit</label>
-                    <Input
-                      value={newStack}
-                      onChange={(e) => setNewStack(e.target.value)}
-                      placeholder="e.g. After Fajr prayer"
-                      maxLength={120}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">Where will you do it?</label>
-                  <Input
-                    value={newLocation}
-                    onChange={(e) => setNewLocation(e.target.value)}
-                    placeholder="e.g. On the prayer mat, at my desk"
-                    maxLength={120}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Reminder to yourself / reward
-                  </label>
-                  <Textarea
-                    value={newReminder}
-                    onChange={(e) => setNewReminder(e.target.value)}
-                    placeholder="What will you tell yourself when you don't feel like it? e.g. 'Every page is a step toward Jannah.'"
-                    rows={2}
-                    maxLength={400}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Daily du'a for this habit
-                  </label>
-                  <Textarea
-                    value={newDua}
-                    onChange={(e) => setNewDua(e.target.value)}
-                    placeholder="e.g. Allahumma a'inni 'ala dhikrika wa shukrika wa husni 'ibadatik."
-                    rows={2}
-                    maxLength={400}
-                  />
-                </div>
+                <HabitFormFields value={form} onChange={setForm} />
                 <Button
                   type="submit"
-                  disabled={!newHabit.trim() || addHabit.isPending}
+                  disabled={!form.name.trim() || addHabit.isPending}
                   className="w-full sm:w-auto"
                 >
                   {addHabit.isPending ? (
@@ -741,16 +837,22 @@ function AppPage() {
                   {habits.map((h) => {
                     const longest = computeLongestStreak(datesByHabit[h.id] ?? []);
                     const pct = Math.min(100, Math.round((longest / STREAK_GOAL) * 100));
+                    const isBad = h.habit_type === "bad";
                     return (
                       <li
                         key={h.id}
-                        className="rounded-2xl border bg-background/50 p-3 transition-all hover:bg-background hover:shadow-sm"
+                        className={`rounded-2xl border bg-background/50 p-3 transition-all hover:bg-background hover:shadow-sm ${isBad ? "border-rose-300/40" : ""}`}
                       >
                         <div className="flex items-center gap-3">
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium">
                               <span className="mr-2 text-lg">{h.emoji ?? "🌱"}</span>
                               {h.name}
+                              {isBad && (
+                                <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                                  <Ban className="h-2.5 w-2.5" /> bad habit
+                                </span>
+                              )}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                               {h.scheduled_time && (
@@ -762,7 +864,13 @@ function AppPage() {
                               {h.stack_on && (
                                 <span className="inline-flex items-center gap-1">
                                   <Link2 className="h-3 w-3" />
-                                  after {h.stack_on}
+                                  {h.stack_on}
+                                </span>
+                              )}
+                              {h.minimum_target && (
+                                <span className="inline-flex items-center gap-1">
+                                  <Target className="h-3 w-3" />
+                                  at least {h.minimum_target}
                                 </span>
                               )}
                               {h.location && (
@@ -775,13 +883,33 @@ function AppPage() {
                           </div>
                           <button
                             type="button"
-                            onClick={() => deleteHabit.mutate(h.id)}
+                            onClick={() => openEdit(h)}
+                            className="rounded-full p-2 text-muted-foreground transition hover:bg-primary/10 hover:text-primary"
+                            aria-label="Edit habit"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`Delete "${h.name}"? This also removes its history.`)) {
+                                deleteHabit.mutate(h.id);
+                              }
+                            }}
                             className="rounded-full p-2 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
                             aria-label="Delete habit"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
+                        {isBad && h.replacement && (
+                          <div className="mt-3 flex items-start gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/70 p-2.5 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                            <Sparkles className="h-3.5 w-3.5 shrink-0 text-emerald-600 mt-0.5" />
+                            <span className="text-foreground/85">
+                              <span className="font-medium">Replace with:</span> {h.replacement}
+                            </span>
+                          </div>
+                        )}
                         {h.ai_motivation && (
                           <div className="mt-3 flex items-start gap-2 rounded-xl bg-gradient-to-br from-primary/5 to-accent/30 p-2.5 text-xs italic text-foreground/80">
                             <Sun className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
@@ -799,7 +927,7 @@ function AppPage() {
                             {h.reminder && (
                               <p className="text-foreground/80">
                                 <HeartHandshake className="mr-1 inline h-3 w-3 text-primary" />
-                                <span className="font-medium">Remember:</span> {h.reminder}
+                                <span className="font-medium">Intention:</span> {h.reminder}
                               </p>
                             )}
                           </div>
@@ -835,13 +963,7 @@ function AppPage() {
 
           {/* HEATMAP */}
           <TabsContent value="heatmap" className="mt-4">
-            <Heatmap
-              counts={countsByDate}
-              totalHabits={habits.length}
-              monthDate={monthDate}
-              onPrev={() => setMonthDate((d) => addMonths(d, -1))}
-              onNext={() => setMonthDate((d) => addMonths(d, 1))}
-            />
+            <Heatmap counts={countsByDate} totalHabits={habits.length} />
           </TabsContent>
 
           {/* WEEKLY REVIEW + BADGES */}
@@ -849,7 +971,7 @@ function AppPage() {
             <div className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
               <h2 className="text-lg font-semibold tracking-tight">This week</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Last 7 days, including today. Reflect with gratitude — alhamdulillah for every checkmark.
+                Last 7 days, including today. Reflect with gratitude. Alhamdulillah for every checkmark.
               </p>
               {habits.length === 0 ? (
                 <p className="mt-6 rounded-2xl border border-dashed py-10 text-center text-sm text-muted-foreground">
@@ -907,17 +1029,16 @@ function AppPage() {
                         <p className="mt-2 text-xs text-muted-foreground">
                           You completed <span className="font-medium text-foreground">{h.name}</span>{" "}
                           for <span className="font-medium text-foreground">{hits}/7</span> days this week.
-                          {hits === 7 && " Ma sha Allah — every single day!"}
+                          {hits === 7 && " Ma sha Allah, every single day!"}
                           {hits >= 5 && hits < 7 && " Strong week, alhamdulillah."}
                           {hits >= 1 && hits < 5 && " Every checkmark is a seed."}
-                          {hits === 0 && " A new week is a new mercy — begin again, in sha Allah."}
+                          {hits === 0 && " A new week is a new mercy. Begin again, in sha Allah."}
                         </p>
-                        {/* Personal reminder the user wrote */}
                         {h.reminder && (
                           <div className="mt-2 flex items-start gap-2 rounded-xl border border-primary/20 bg-primary/5 p-2.5 text-xs">
                             <HeartHandshake className="h-3.5 w-3.5 shrink-0 text-primary mt-0.5" />
                             <span className="text-foreground/85">
-                              <span className="font-medium">Your reminder:</span> {h.reminder}
+                              <span className="font-medium">Your intention:</span> {h.reminder}
                             </span>
                           </div>
                         )}
@@ -934,7 +1055,6 @@ function AppPage() {
               )}
             </div>
 
-            {/* BADGES */}
             <div className="rounded-3xl border bg-card/80 p-6 shadow-sm backdrop-blur-sm">
               <h2 className="text-lg font-semibold tracking-tight">Badges</h2>
               <p className="mt-1 text-sm text-muted-foreground">
@@ -990,6 +1110,37 @@ function AppPage() {
         </Tabs>
       </main>
 
+      {/* Edit dialog */}
+      <Dialog open={!!editingHabit} onOpenChange={(o) => !o && setEditingHabit(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit habit</DialogTitle>
+            <DialogDescription>Update any field below.</DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (editForm.name.trim()) updateHabit.mutate();
+            }}
+            className="space-y-3"
+          >
+            <HabitFormFields value={editForm} onChange={setEditForm} />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setEditingHabit(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!editForm.name.trim() || updateHabit.isPending}>
+                {updateHabit.isPending ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</>
+                ) : (
+                  "Save changes"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       {/* Badge details dialog */}
       <Dialog open={!!selectedBadge} onOpenChange={(o) => !o && setSelectedBadge(null)}>
         <DialogContent className="sm:max-w-md">
@@ -1021,7 +1172,7 @@ function AppPage() {
                       selectedBadge.badge.earned ? "text-primary" : "text-muted-foreground"
                     }`}
                   >
-                    {selectedBadge.badge.earned ? "Earned, ma sha Allah" : "Not yet — keep going"}
+                    {selectedBadge.badge.earned ? "Earned, ma sha Allah" : "Not yet, keep going"}
                   </span>
                 </div>
               </div>
@@ -1030,5 +1181,138 @@ function AppPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function HabitFormFields({
+  value,
+  onChange,
+}: {
+  value: HabitFormState;
+  onChange: (v: HabitFormState) => void;
+}) {
+  const set = <K extends keyof HabitFormState>(k: K, v: HabitFormState[K]) =>
+    onChange({ ...value, [k]: v });
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-muted/30 p-1 text-xs">
+        <button
+          type="button"
+          onClick={() => set("habit_type", "good")}
+          className={`rounded-xl px-3 py-2 transition ${
+            value.habit_type === "good"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Sparkles className="mr-1 inline h-3.5 w-3.5" />
+          Habit to build
+        </button>
+        <button
+          type="button"
+          onClick={() => set("habit_type", "bad")}
+          className={`rounded-xl px-3 py-2 transition ${
+            value.habit_type === "bad"
+              ? "bg-rose-500 text-white shadow-sm"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Ban className="mr-1 inline h-3.5 w-3.5" />
+          Habit to break
+        </button>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">
+          {value.habit_type === "bad" ? "Habit to avoid" : "Habit"}
+        </label>
+        <Input
+          value={value.name}
+          onChange={(e) => set("name", e.target.value)}
+          placeholder={
+            value.habit_type === "bad"
+              ? "e.g. Scrolling after Fajr"
+              : "e.g. Read one page of Qur'an"
+          }
+          maxLength={120}
+        />
+      </div>
+
+      {value.habit_type === "bad" && (
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Replace with (better habit)</label>
+          <Input
+            value={value.replacement}
+            onChange={(e) => set("replacement", e.target.value)}
+            placeholder="e.g. Adhkar al-Sabah"
+            maxLength={200}
+          />
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Time of day</label>
+          <Input
+            type="time"
+            value={value.time}
+            onChange={(e) => set("time", e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground">Stack on existing habit</label>
+          <Input
+            value={value.stack}
+            onChange={(e) => set("stack", e.target.value)}
+            placeholder="e.g. After Fajr prayer"
+            maxLength={120}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">
+          At least (minimum for hard days)
+        </label>
+        <Input
+          value={value.minimum_target}
+          onChange={(e) => set("minimum_target", e.target.value)}
+          placeholder="e.g. 1 page, 1 rak'ah, 2 minutes"
+          maxLength={80}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">Where will you do it?</label>
+        <Input
+          value={value.location}
+          onChange={(e) => set("location", e.target.value)}
+          placeholder="e.g. On the prayer mat, at my desk"
+          maxLength={120}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">Intention / reminder</label>
+        <Textarea
+          value={value.intention}
+          onChange={(e) => set("intention", e.target.value)}
+          placeholder="Your niyyah and what to tell yourself when you don't feel like it. e.g. 'For Allah. Every page is a step toward Jannah.'"
+          rows={2}
+          maxLength={400}
+        />
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">Daily du'a for this habit</label>
+        <Textarea
+          value={value.dua}
+          onChange={(e) => set("dua", e.target.value)}
+          placeholder="e.g. Allahumma a'inni 'ala dhikrika wa shukrika wa husni 'ibadatik."
+          rows={2}
+          maxLength={400}
+        />
+      </div>
+    </>
   );
 }
